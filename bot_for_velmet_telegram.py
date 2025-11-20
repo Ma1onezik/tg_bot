@@ -1,0 +1,576 @@
+
+
+import telebot
+from telebot import types
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Настройки
+TOKEN = '8231656744:AAFTUzFcs0B3GOzcQ4ONeC-0fmquObPUY9o'
+ADMIN_CHAT_ID = '-1003083819225'
+
+bot = telebot.TeleBot(TOKEN)
+
+user_data = {}
+
+# Товары
+products = {
+    'hoodie': {
+        'name': "Худи 'sand dunes'",
+        'sizes': ['S', 'M', 'L', 'XL'],
+        'price': 6600
+    }
+}
+
+class UserData:
+    def __init__(self):
+        self.full_name = None
+        self.phone = None
+        self.email = None
+        self.telegram = None
+        self.cart = []
+
+def get_user_data(user_id):
+    """Безопасное получение данных пользователя"""
+    if user_id not in user_data:
+        user_data[user_id] = UserData()
+        logger.info(f"Созданы новые данные для пользователя {user_id}")
+    return user_data[user_id]
+
+def clear_user_data(user_id):
+    """Очистить данные пользователя"""
+    if user_id in user_data:
+        user_data[user_id] = UserData()
+        logger.info(f"Данные пользователя {user_id} очищены")
+
+def get_main_keyboard():
+    """Главное меню с кнопками"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    item1 = types.KeyboardButton('📦 Сделать заказ')
+    item2 = types.KeyboardButton('🔄 Пересоздать заявку')
+    markup.add(item1, item2)
+    return markup
+
+@bot.message_handler(commands=['start', 'restart'])
+def start_message(message):
+    try:
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        bot.send_message(message.chat.id, 
+                        "👋 Привет! Я бот для заказа товаров у бренда одежды и аксессуаров 'Velmet'\n\n"
+                        "Нажми '📦 Сделать заказ' чтобы начать!\n", 
+                        reply_markup=get_main_keyboard())
+        logger.info(f"Пользователь {user_id} запустил бота")
+    except Exception as e:
+        logger.error(f"Ошибка в start_message: {e}")
+
+@bot.message_handler(func=lambda message: message.text == '📦 Сделать заказ')
+def start_order(message):
+    try:
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        # Запрашиваем ФИО вместе
+        msg = bot.send_message(message.chat.id, 
+                              "📝 Введите ваше Фамилию и Имя (например: Иванов Иван):\n\n",
+                              reply_markup=types.ReplyKeyboardRemove())
+        bot.register_next_step_handler(msg, process_full_name)
+    except Exception as e:
+        logger.error(f"Ошибка в start_order: {e}")
+        bot.send_message(message.chat.id, "❌ Произошла ошибка. Попробуйте снова /start", 
+                        reply_markup=get_main_keyboard())
+
+@bot.message_handler(func=lambda message: message.text == '🔄 Пересоздать заявку')
+def restart_order(message):
+    try:
+        user_id = message.from_user.id
+        clear_user_data(user_id)
+        
+        bot.send_message(message.chat.id, 
+                        "🔄 Заявка пересоздана! Все данные очищены.\n\n"
+                        "Теперь вы можете начать новый заказ:",
+                        reply_markup=get_main_keyboard())
+        logger.info(f"Пользователь {user_id} пересоздал заявку")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в restart_order: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка при пересоздании заявки")
+
+def process_full_name(message):
+    try:
+        # Проверяем, не хочет ли пользователь пересоздать заявку
+        if message.text in ['/start', '/restart', '🔄 Пересоздать заявку']:
+            restart_order(message)
+            return
+            
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        user.full_name = message.text
+        
+        # Создаем кнопку для отправки номера телефона
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        item = types.KeyboardButton('📞 Отправить номер телефона', request_contact=True)
+        back_button = types.KeyboardButton('🔄 Начать заново')
+        markup.add(item, back_button)
+        
+        msg = bot.send_message(message.chat.id, 
+                              "📞 Теперь нам нужен ваш номер телефона\n\n"
+                              "Нажмите кнопку ниже чтобы отправить его автоматически\n", 
+                              reply_markup=markup)
+        bot.register_next_step_handler(msg, process_phone)
+    except Exception as e:
+        logger.error(f"Ошибка в process_full_name: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
+                        reply_markup=get_main_keyboard())
+
+def process_phone(message):
+    try:
+        # Проверяем, не хочет ли пользователь пересоздать заявку
+        if message.text in ['/start', '/restart', '🔄 Начать заново']:
+            restart_order(message)
+            return
+            
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        if message.contact:
+            user.phone = message.contact.phone_number
+        else:
+            user.phone = message.text
+        
+        # Убираем специальную клавиатуру, добавляем кнопку начала заново
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        back_button = types.KeyboardButton('🔄 Начать заново')
+        markup.add(back_button)
+        
+        msg = bot.send_message(message.chat.id, 
+                              "✈️ Введите ваш Telegram username (например, @username):\n", 
+                              reply_markup=markup)
+        bot.register_next_step_handler(msg, process_telegram)
+    except Exception as e:
+        logger.error(f"Ошибка в process_phone: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
+                        reply_markup=get_main_keyboard())
+
+def process_telegram(message):
+    try:
+        # Проверяем, не хочет ли пользователь пересоздать заявку
+        if message.text in ['/start', '/restart', '🔄 Начать заново']:
+            restart_order(message)
+            return
+            
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        telegram = message.text.strip()
+        
+        if telegram.lower() in ['нет', 'no', 'skip']:
+            user.telegram = "не указан"
+        else:
+            user.telegram = telegram
+        
+        # Добавляем кнопку начала заново
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        back_button = types.KeyboardButton('🔄 Начать заново')
+        markup.add(back_button)
+        
+        msg = bot.send_message(message.chat.id, 
+                              "📧 Введите ваш Email (необязательно):\n"
+                              "Если не хотите указывать, напишите 'нет'\n\n",
+                              reply_markup=markup)
+        bot.register_next_step_handler(msg, process_email)
+    except Exception as e:
+        logger.error(f"Ошибка в process_telegram: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
+                        reply_markup=get_main_keyboard())
+
+def process_email(message):
+    try:
+        # Проверяем, не хочет ли пользователь пересоздать заявку
+        if message.text in ['/start', '/restart', '🔄 Начать заново']:
+            restart_order(message)
+            return
+            
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        email = message.text.strip()
+        
+        if email.lower() in ['нет', 'no', 'skip']:
+            user.email = "не указан"
+        else:
+            user.email = email
+        
+        # Переходим к выбору товара
+        show_catalog(message)
+    except Exception as e:
+        logger.error(f"Ошибка в process_email: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
+                        reply_markup=get_main_keyboard())
+
+def show_catalog(message):
+    try:
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        # Добавляем кнопку начала заново в каталог
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        back_button = types.KeyboardButton('🔄 Начать заново')
+        markup.add(back_button)
+        
+        # Inline кнопки для товаров
+        inline_markup = types.InlineKeyboardMarkup()
+        
+        # Кнопка для добавления худи
+        for size in products['hoodie']['sizes']:
+            button = types.InlineKeyboardButton(
+                f"Худи {size} - {products['hoodie']['price']}₽", 
+                callback_data=f"add_hoodie_{size}"
+            )
+            inline_markup.add(button)
+        
+        # Кнопка просмотра корзины
+        if user.cart:
+            cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
+            inline_markup.add(cart_button)
+        
+        # ВСЕГДА добавляем кнопку завершения заказа
+        done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
+        inline_markup.add(done_button)
+        
+        bot.send_message(message.chat.id, 
+                        "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
+                        f"🏷️ {products['hoodie']['name']}\n"
+                        f"💵 Цена: {products['hoodie']['price']}₽\n"
+                        f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
+                        "Выберите размер:\n\n", 
+                        reply_markup=markup)
+        
+        # Отправляем inline кнопки отдельным сообщением
+        bot.send_message(message.chat.id, "👇 Выберите действие:", reply_markup=inline_markup)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_catalog: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
+                        reply_markup=get_main_keyboard())
+
+# Обработчик кнопки "Начать заново" в процессе оформления
+@bot.message_handler(func=lambda message: message.text == '🔄 Начать заново')
+def restart_in_process(message):
+    restart_order(message)
+
+# ... остальные функции (add_to_cart, show_cart, clear_cart, finish_order и т.д.) остаются без изменений
+# Просто добавьте их из предыдущего кода
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('add_hoodie_'))
+def add_to_cart(call):
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        size = call.data.replace('add_hoodie_', '')
+        
+        print(f"DEBUG: Добавляем товар для user_id {user_id}")
+        
+        # Добавляем товар в корзину
+        user.cart.append({
+            'product': 'hoodie',
+            'size': size,
+            'price': products['hoodie']['price'],
+            'quantity': 1
+        })
+        
+        print(f"DEBUG: Корзина после добавления: {user.cart}")
+        
+        # Показываем уведомление о добавлении
+        bot.answer_callback_query(call.id, f"✅ Худи размера {size} добавлен в корзину!")
+        
+        # Отправляем сообщение о добавленном товаре
+        show_added_message(call)
+        
+    except Exception as e:
+        print(f"ERROR в add_to_cart: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при добавлении товара")
+
+def show_added_message(call):
+    """Показывает сообщение о добавленном товаре"""
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        
+        # Формируем сообщение о добавленном товаре
+        added_item = user.cart[-1]  # Последний добавленный товар
+        added_text = (
+            f"✅ Добавлено в корзину:\n"
+            f"🏷️ {products[added_item['product']]['name']}\n"
+            f"📏 Размер: {added_item['size']}\n"
+            f"💵 Цена: {added_item['price']}₽\n\n"
+            f"🛒 Теперь в корзине: {len(user.cart)} товар(ов)"
+        )
+        
+        # Отправляем сообщение о добавлении
+        bot.send_message(call.message.chat.id, added_text)
+        
+        # Показываем обновленный каталог
+        show_catalog_updated(call.message)
+        
+    except Exception as e:
+        print(f"ERROR в show_added_message: {e}")
+
+def show_catalog_updated(message):
+    """Показывает обновленный каталог"""
+    try:
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        # Добавляем кнопку начала заново
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        back_button = types.KeyboardButton('🔄 Начать заново')
+        markup.add(back_button)
+        
+        # Inline кнопки
+        inline_markup = types.InlineKeyboardMarkup()
+        
+        # Кнопка для добавления худи
+        for size in products['hoodie']['sizes']:
+            button = types.InlineKeyboardButton(
+                f"Худи {size} - {products['hoodie']['price']}₽", 
+                callback_data=f"add_hoodie_{size}"
+            )
+            inline_markup.add(button)
+        
+        # Кнопка просмотра корзины
+        if user.cart:
+            cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
+            inline_markup.add(cart_button)
+        
+        # ВСЕГДА добавляем кнопку завершения заказа
+        done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
+        inline_markup.add(done_button)
+        
+        bot.send_message(message.chat.id,
+                       "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
+                       f"🏷️ {products['hoodie']['name']}\n"
+                       f"💵 Цена: {products['hoodie']['price']}₽\n"
+                       f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
+                       "Выберите размер:\n\n",
+                       reply_markup=markup)
+        
+        bot.send_message(message.chat.id, "👇 Выберите действие:", reply_markup=inline_markup)
+            
+    except Exception as e:
+        logger.error(f"Ошибка в show_catalog_updated: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'view_cart')
+def view_cart_callback(call):
+    """Обработчик кнопки просмотра корзины"""
+    show_cart(call)
+
+def show_cart(message_or_call):
+    try:
+        # Определяем user_id в зависимости от типа входящих данных
+        if hasattr(message_or_call, 'from_user'):
+            # Если это обычное сообщение
+            user_id = message_or_call.from_user.id
+            chat_id = message_or_call.chat.id
+        else:
+            # Если это callback
+            user_id = message_or_call.from_user.id
+            chat_id = message_or_call.message.chat.id
+            
+        user = get_user_data(user_id)
+        
+        print(f"DEBUG: Показываем корзину для user_id {user_id}")
+        print(f"DEBUG: Корзина содержит: {user.cart}")
+        
+        if not user.cart:
+            text = "🛒 Ваша корзина пуста"
+            markup = types.InlineKeyboardMarkup()
+            continue_button = types.InlineKeyboardButton("🛍️ К каталогу", callback_data="continue_shopping")
+            markup.add(continue_button)
+        else:
+            text = "🛒 ВАША КОРЗИНА:\n\n"
+            total = 0
+            
+            for index, item in enumerate(user.cart):
+                item_total = item['price'] * item['quantity']
+                total += item_total
+                text += f"{index + 1}. {products[item['product']]['name']} (Размер: {item['size']})\n"
+                text += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n\n"
+            
+            text += f"💰 Общая сумма: {total} ₽"
+        
+            markup = types.InlineKeyboardMarkup()
+            
+            # Кнопки для управления корзиной - ВСЕГДА показываем очистку если есть товары
+            clear_button = types.InlineKeyboardButton("🗑️ Очистить корзину", callback_data="clear_cart")
+            markup.add(clear_button)
+            
+            continue_button = types.InlineKeyboardButton("➕ Добавить еще товар", callback_data="continue_shopping")
+            finish_button = types.InlineKeyboardButton("✅ Подтвердить заказ", callback_data="finish_order")
+            markup.add(continue_button, finish_button)
+        
+        # Всегда отправляем новое сообщение с корзиной
+        bot.send_message(chat_id, text, reply_markup=markup)
+            
+    except Exception as e:
+        print(f"ERROR в show_cart: {e}")
+        bot.send_message(chat_id, "❌ Ошибка при отображении корзины")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'clear_cart')
+def clear_cart(call):
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        
+        if not user.cart:
+            bot.answer_callback_query(call.id, "❌ Корзина уже пуста!")
+            return
+        
+        # Сохраняем количество товаров для сообщения
+        items_count = len(user.cart)
+        
+        # Очищаем корзину
+        user.cart = []
+        
+        bot.answer_callback_query(call.id, f"🗑️ Корзина очищена! Удалено {items_count} товар(ов)")
+        
+        # Показываем обновленную корзину
+        show_cart(call)
+        
+    except Exception as e:
+        print(f"ERROR в clear_cart: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при очистке корзины")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'continue_shopping')
+def continue_shopping(call):
+    try:
+        show_catalog_updated(call.message)
+    except Exception as e:
+        logger.error(f"Ошибка в continue_shopping: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'finish_order')
+def finish_order(call):
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        
+        if not user.cart:
+            bot.answer_callback_query(call.id, "❌ Корзина пуста! Добавьте товары.")
+            return
+        
+        # Формируем сообщение о заказе
+        order_text = format_order_message(user)
+        
+        # ВРЕМЕННО: выводим заказ в консоль
+        print("🎉 НОВЫЙ ЗАКАЗ!")
+        print(order_text)
+        
+        # ОТПРАВЛЯЕМ ЗАКАЗ В ГРУППУ
+        try:
+            bot.send_message(ADMIN_CHAT_ID, order_text)
+            print(f"✅ Заказ отправлен в группу {ADMIN_CHAT_ID}")
+        except Exception as e:
+            print(f"❌ Ошибка отправки в группу: {e}")
+            bot.send_message(call.message.chat.id, f"⚠️ Заказ принят, но произошла ошибка уведомления администратора")
+        
+        # Подсчитываем итог
+        total = sum(item['price'] * item['quantity'] for item in user.cart)
+        
+        # Сообщение пользователю
+        success_msg = (
+            f"✅ Ваш заказ принят!\n\n"
+            f"💰 Сумма заказа: {total} ₽\n"
+            f"📞 Мы свяжемся с вами в ближайшее время по номеру {user.phone}\n\n"
+            "Спасибо за заказ! ❤️"
+        )
+        
+        bot.send_message(call.message.chat.id, success_msg)
+        
+        # Показываем заказ пользователю
+        bot.send_message(call.message.chat.id, f"📋 Детали вашего заказа:\n\n{order_text}")
+        
+        # Очищаем корзину
+        user.cart = []
+        
+        # Возвращаем главное меню
+        bot.send_message(call.message.chat.id, 
+                        "🔄 Если хотите сделать новый заказ, нажмите кнопку ниже:",
+                        reply_markup=get_main_keyboard())
+        
+        bot.answer_callback_query(call.id, "✅ Заказ оформлен!")
+        logger.info(f"Пользователь {user_id} завершил заказ на сумму {total}₽")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в finish_order: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при оформлении заказа")
+        bot.send_message(call.message.chat.id, "❌ Произошла ошибка. Попробуйте снова /start", 
+                        reply_markup=get_main_keyboard())
+
+def format_order_message(user):
+    """Форматирует сообщение о заказе в нужном стиле"""
+    
+    # Подсчет общей суммы
+    total = sum(item['price'] * item['quantity'] for item in user.cart)
+    
+    # Формируем сообщение
+    message = "🎉 НОВЫЙ ЗАКАЗ!\n\n"
+    message += f"👤 Клиент: {user.full_name}\n"
+    message += f"📞 Телефон: {user.phone}\n"
+    message += f"📧 Email: {user.email}\n"
+    message += f"✈️ Telegram: {user.telegram}\n\n"
+    message += "🛒 ТОВАРЫ:\n\n"
+    
+    for index, item in enumerate(user.cart):
+        item_total = item['price'] * item['quantity']
+        message += f"{index + 1}. {products[item['product']]['name']} (Размер: {item['size']})\n"
+        message += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n\n"
+    
+    message += f"💰 Общая сумма: {total} ₽"
+    
+    return message
+
+# Команда для проверки отправки в группу
+@bot.message_handler(commands=['check_group'])
+def check_group(message):
+    """Проверить возможность отправки в группу"""
+    try:
+        test_msg = "🔍 Тестовое сообщение от бота для проверки связи с группой"
+        bot.send_message(ADMIN_CHAT_ID, test_msg)
+        bot.send_message(message.chat.id, "✅ Сообщение отправлено в группу!")
+        print(f"✅ Тестовое сообщение отправлено в группу {ADMIN_CHAT_ID}")
+    except Exception as e:
+        error_msg = f"❌ Ошибка отправки в группу: {e}"
+        bot.send_message(message.chat.id, error_msg)
+        print(error_msg)
+
+# Команда для отладки - посмотреть данные пользователя
+@bot.message_handler(commands=['debug'])
+def debug_info(message):
+    user_id = message.from_user.id
+    user = get_user_data(user_id)
+    
+    debug_text = (
+        f"🔄 ДЕБАГ ИНФОРМАЦИЯ:\n"
+        f"User ID: {user_id}\n"
+        f"ФИО: {user.full_name}\n"
+        f"Телефон: {user.phone}\n"
+        f"Telegram: {user.telegram}\n"
+        f"Email: {user.email}\n"
+        f"Товаров в корзине: {len(user.cart)}\n"
+        f"Всего пользователей в памяти: {len(user_data)}"
+    )
+    
+    bot.send_message(message.chat.id, debug_text)
+
+# Запуск бота
+if __name__ == '__main__':
+    print("Бот запущен...")
+    print(f"ADMIN_CHAT_ID: {ADMIN_CHAT_ID}")
+    try:
+        bot.polling(none_stop=True, interval=0)
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
+        print(f"Критическая ошибка: {e}")
