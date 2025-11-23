@@ -85,7 +85,7 @@ def start_order(message):
         
         # Запрашиваем ФИО вместе
         msg = bot.send_message(message.chat.id, 
-                              "📝 Введите ваше Фамилию и Имя (например: Иванов Иван), это нужно для того, чтобы мы знали как к вам обращаться :) :\n\n",
+                              "📝 Введите ваше Фамилию и Имя (например: Иванов Иван), это нужно для того, чтобы мы знали как к вам обращаться :)\n\n",
                               reply_markup=types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, process_full_name)
     except Exception as e:
@@ -243,14 +243,18 @@ def show_catalog(message):
         if user.cart:
             cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
             inline_markup.add(cart_button)
+            
+            # Кнопка завершения заказа (только если есть товары в корзине)
+            done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
+            inline_markup.add(done_button)
         
         bot.send_message(message.chat.id, 
-                        "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
+                        "🛍️ КАТАЛОГ ТОВАРОВ\n\n"
                         "👇 Выберите товар:",
                         reply_markup=markup)
         
-        # Отправляем inline кнопки
-        bot.send_message(message.chat.id, "Выберите товар:", reply_markup=inline_markup)
+        # Отправляем inline кнопки с текстом
+        bot.send_message(message.chat.id, "🛒 Выберите следующее действие:", reply_markup=inline_markup)
         
     except Exception as e:
         logger.error(f"Ошибка в show_catalog: {e}")
@@ -327,23 +331,44 @@ def add_to_cart(call):
         # Показываем уведомление о добавлении
         bot.answer_callback_query(call.id, f"✅ Худи размера {size} добавлен в корзину!")
         
-        # Показываем обновленный каталог
-        show_catalog_updated(call.message)
+        # Показываем сообщение о добавлении и обновляем каталог
+        show_added_message(call)
         
     except Exception as e:
         print(f"ERROR в add_to_cart: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка при добавлении товара")
 
+def show_added_message(call):
+    """Показывает сообщение о добавленном товаре и возвращает в каталог"""
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        
+        # Формируем сообщение о добавленном товаре
+        added_item = user.cart[-1]  # Последний добавленный товар
+        added_text = (
+            f"✅ Добавлено в корзину:\n"
+            f"🏷️ {products[added_item['product']]['name']}\n"
+            f"📏 Размер: {added_item['size']}\n"
+            f"💵 Цена: {added_item['price']}₽\n"
+            f"🧾 Предоплата: {added_item['pre_save']}₽\n\n"
+            f"🛒 Теперь в корзине: {len(user.cart)} товар(ов)"
+        )
+        
+        # Отправляем сообщение о добавлении
+        bot.send_message(call.message.chat.id, added_text)
+        
+        # Показываем обновленный каталог (без дублирования заголовка)
+        show_catalog_updated(call.message)
+        
+    except Exception as e:
+        print(f"ERROR в show_added_message: {e}")
+
 def show_catalog_updated(message):
-    """Показывает обновленный каталог"""
+    """Показывает обновленный каталог с кнопкой завершения заказа"""
     try:
         user_id = message.from_user.id
         user = get_user_data(user_id)
-        
-        # Добавляем кнопку начала заново
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        back_button = types.KeyboardButton('🔄 Начать заново')
-        markup.add(back_button)
         
         # Inline кнопки
         inline_markup = types.InlineKeyboardMarkup()
@@ -355,22 +380,17 @@ def show_catalog_updated(message):
         )
         inline_markup.add(hoodie_button)
         
-        # Кнопка просмотра корзины
+        # Кнопка просмотра корзины (ВСЕГДА показываем если есть товары)
         if user.cart:
             cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
             inline_markup.add(cart_button)
+            
+        # Кнопка завершения заказа 
+        done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
+        inline_markup.add(done_button)
         
-        # Кнопка завершения заказа
-        if user.cart:
-            done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
-            inline_markup.add(done_button)
-        
-        bot.send_message(message.chat.id,
-                       "🛍️ КАТАЛОГ ТОВАРОВ\n\n"
-                       "👇 Выберите товар:",
-                       reply_markup=markup)
-        
-        bot.send_message(message.chat.id, "Выберите действие:", reply_markup=inline_markup)
+        # Отправляем только кнопки без повторного заголовка
+        bot.send_message(message.chat.id, "🛒 Выберите следующее действие:", reply_markup=inline_markup)
             
     except Exception as e:
         logger.error(f"Ошибка в show_catalog_updated: {e}")
@@ -454,8 +474,8 @@ def clear_cart(call):
         
         bot.answer_callback_query(call.id, f"🗑️ Корзина очищена! Удалено {items_count} товар(ов)")
         
-        # Показываем обновленную корзину
-        show_cart(call)
+        # Возвращаем в каталог
+        show_catalog(call.message)
         
     except Exception as e:
         print(f"ERROR в clear_cart: {e}")
@@ -464,7 +484,7 @@ def clear_cart(call):
 @bot.callback_query_handler(func=lambda call: call.data == 'continue_shopping')
 def continue_shopping(call):
     try:
-        show_catalog_updated(call.message)
+        show_catalog(call.message)
     except Exception as e:
         logger.error(f"Ошибка в continue_shopping: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка")
@@ -508,7 +528,10 @@ def show_payment_types(message):
         markup.add(back_button)
         
         message_text = (
-            "💳 Выберите тип оплаты:"
+            "💳 Выберите тип оплаты: \n"
+            "Важное упоминание: \n"
+            "💡 *Сумма предзаказа* - это предоплата, которая фиксирует за вами право на товар. \n"
+            "Окончательный расчет производится позже.\n\n"
         )
         
         bot.send_message(message.chat.id, message_text, reply_markup=markup)
