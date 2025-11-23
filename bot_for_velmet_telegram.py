@@ -1,5 +1,4 @@
 
-
 import telebot
 from telebot import types
 import logging
@@ -21,8 +20,15 @@ products = {
     'hoodie': {
         'name': "Худи 'sand dunes'",
         'sizes': ['S', 'M', 'L', 'XL'],
-        'price': 6600
+        'price': 6600,
+        'pre-save': 2200
     }
+}
+
+# Типы оплаты
+payment_types = {
+    'full': '💳 Полная оплата',
+    'preorder': '🧾 Предзаказ (предоплата)'
 }
 
 class UserData:
@@ -32,6 +38,7 @@ class UserData:
         self.email = None
         self.telegram = None
         self.cart = []
+        self.payment_type = None
 
 def get_user_data(user_id):
     """Безопасное получение данных пользователя"""
@@ -76,7 +83,7 @@ def start_order(message):
         
         # Запрашиваем ФИО вместе
         msg = bot.send_message(message.chat.id, 
-                              "📝 Введите ваше Фамилию и Имя (например: Иванов Иван):\n\n",
+                              "📝 Введите ваше Фамилию и Имя (например: Иванов Иван), это нужно для того, чтобы мы знали как к вам обращаться :) :\n\n",
                               reply_markup=types.ReplyKeyboardRemove())
         bot.register_next_step_handler(msg, process_full_name)
     except Exception as e:
@@ -148,7 +155,7 @@ def process_phone(message):
         markup.add(back_button)
         
         msg = bot.send_message(message.chat.id, 
-                              "✈️ Введите ваш Telegram username (например, @username):\n", 
+                              "✈️ Пожалуйста, укажите ваш Telegram username в формате @username. Это самый быстрый способ связи. Если вам удобнее общаться через другие мессенджеры, просто напишите «нет», и мы свяжемся с вами другим удобным для вас способом.\n",
                               reply_markup=markup)
         bot.register_next_step_handler(msg, process_telegram)
     except Exception as e:
@@ -244,9 +251,13 @@ def show_catalog(message):
                         "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
                         f"🏷️ {products['hoodie']['name']}\n"
                         f"💵 Цена: {products['hoodie']['price']}₽\n"
+                        f"🧾 Сумма предзаказа: {products['hoodie']['pre-save']}₽\n"
                         f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
-                        "Выберите размер:\n\n", 
-                        reply_markup=markup)
+                        "💡 *Сумма предзаказа* - это предоплата, которая фиксирует за вами право на товар. "
+                        "Окончательный расчет производится позже.\n\n"
+                        "👇 Выберите размер:",
+                        reply_markup=markup,
+                        parse_mode="Markdown")
         
         # Отправляем inline кнопки отдельным сообщением
         bot.send_message(message.chat.id, "👇 Выберите действие:", reply_markup=inline_markup)
@@ -260,9 +271,6 @@ def show_catalog(message):
 @bot.message_handler(func=lambda message: message.text == '🔄 Начать заново')
 def restart_in_process(message):
     restart_order(message)
-
-# ... остальные функции (add_to_cart, show_cart, clear_cart, finish_order и т.д.) остаются без изменений
-# Просто добавьте их из предыдущего кода
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('add_hoodie_'))
 def add_to_cart(call):
@@ -278,6 +286,7 @@ def add_to_cart(call):
             'product': 'hoodie',
             'size': size,
             'price': products['hoodie']['price'],
+            'pre_save': products['hoodie']['pre-save'],
             'quantity': 1
         })
         
@@ -305,7 +314,8 @@ def show_added_message(call):
             f"✅ Добавлено в корзину:\n"
             f"🏷️ {products[added_item['product']]['name']}\n"
             f"📏 Размер: {added_item['size']}\n"
-            f"💵 Цена: {added_item['price']}₽\n\n"
+            f"💵 Цена: {added_item['price']}₽\n"
+            f"🧾 Предоплата: {added_item['pre_save']}₽\n\n"
             f"🛒 Теперь в корзине: {len(user.cart)} товар(ов)"
         )
         
@@ -392,14 +402,19 @@ def show_cart(message_or_call):
         else:
             text = "🛒 ВАША КОРЗИНА:\n\n"
             total = 0
+            pre_save_total = 0
             
             for index, item in enumerate(user.cart):
                 item_total = item['price'] * item['quantity']
+                item_pre_save = item['pre_save'] * item['quantity']
                 total += item_total
+                pre_save_total += item_pre_save
                 text += f"{index + 1}. {products[item['product']]['name']} (Размер: {item['size']})\n"
-                text += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n\n"
+                text += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n"
+                text += f"   💰 Предоплата: {item_pre_save} ₽\n\n"
             
-            text += f"💰 Общая сумма: {total} ₽"
+            text += f"💰 Общая сумма: {total} ₽\n"
+            text += f"🧾 Сумма предоплаты: {pre_save_total} ₽"
         
             markup = types.InlineKeyboardMarkup()
             
@@ -461,33 +476,81 @@ def finish_order(call):
             bot.answer_callback_query(call.id, "❌ Корзина пуста! Добавьте товары.")
             return
         
-        # Формируем сообщение о заказе
+        # Показываем выбор типа оплаты
+        show_payment_types(call.message)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в finish_order: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при оформлении заказа")
+
+def show_payment_types(message):
+    """Показывает выбор типа оплаты (полная/предзаказ)"""
+    try:
+        user_id = message.from_user.id
+        user = get_user_data(user_id)
+        
+        # Подсчитываем суммы
+        total = sum(item['price'] * item['quantity'] for item in user.cart)
+        pre_save_total = sum(item['pre_save'] * item['quantity'] for item in user.cart)
+        
+        # Создаем клавиатуру с типами оплаты
+        markup = types.InlineKeyboardMarkup()
+        
+        for type_key, type_name in payment_types.items():
+            button = types.InlineKeyboardButton(type_name, callback_data=f"paytype_{type_key}")
+            markup.add(button)
+        
+        # Кнопка назад к корзине
+        back_button = types.InlineKeyboardButton("⬅️ Назад к корзине", callback_data="view_cart")
+        markup.add(back_button)
+        
+        message_text = (
+            "💳 ВЫБОР ТИПА ОПЛАТЫ\n\n"
+            f"💰 Общая сумма заказа: {total} ₽\n"
+            f"🧾 Сумма предоплаты: {pre_save_total} ₽\n\n"
+            "Выберите тип оплаты:"
+        )
+        
+        bot.send_message(message.chat.id, message_text, reply_markup=markup)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_payment_types: {e}")
+        bot.send_message(message.chat.id, "❌ Ошибка при выборе типа оплаты")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('paytype_'))
+def process_payment_type(call):
+    """Обрабатывает выбор типа оплаты"""
+    try:
+        user_id = call.from_user.id
+        user = get_user_data(user_id)
+        
+        payment_type = call.data.replace('paytype_', '')
+        user.payment_type = payment_type
+        
+        # Формируем финальное сообщение о заказе
         order_text = format_order_message(user)
         
-        # ВРЕМЕННО: выводим заказ в консоль
-        print("🎉 НОВЫЙ ЗАКАЗ!")
-        print(order_text)
-        
-        # ОТПРАВЛЯЕМ ЗАКАЗ В ГРУППУ
+        # Отправляем заказ в группу
         try:
             bot.send_message(ADMIN_CHAT_ID, order_text)
             print(f"✅ Заказ отправлен в группу {ADMIN_CHAT_ID}")
         except Exception as e:
             print(f"❌ Ошибка отправки в группу: {e}")
-            bot.send_message(call.message.chat.id, f"⚠️ Заказ принят, но произошла ошибка уведомления администратора")
         
-        # Подсчитываем итог
+        # Подсчитываем итоги
         total = sum(item['price'] * item['quantity'] for item in user.cart)
+        pre_save_total = sum(item['pre_save'] * item['quantity'] for item in user.cart)
         
         # Сообщение пользователю
         success_msg = (
             f"✅ Ваш заказ принят!\n\n"
-            f"💰 Сумма заказа: {total} ₽\n"
-            f"📞 Мы свяжемся с вами в ближайшее время по номеру {user.phone}\n\n"
-            "Спасибо за заказ! ❤️"
+            f"💰 Общая сумма заказа: {total} ₽\n"
+            f"💳 Тип оплаты: {payment_types[payment_type]}\n"
         )
         
-        bot.send_message(call.message.chat.id, success_msg)
+        success_msg += f"\n\n📞 Мы свяжемся с вами в ближайшее время по номеру {user.phone}\n\nСпасибо за заказ! ❤️"
+        
+        bot.send_message(call.message.chat.id, success_msg, parse_mode="Markdown")
         
         # Показываем заказ пользователю
         bot.send_message(call.message.chat.id, f"📋 Детали вашего заказа:\n\n{order_text}")
@@ -501,10 +564,10 @@ def finish_order(call):
                         reply_markup=get_main_keyboard())
         
         bot.answer_callback_query(call.id, "✅ Заказ оформлен!")
-        logger.info(f"Пользователь {user_id} завершил заказ на сумму {total}₽")
+        logger.info(f"Пользователь {user_id} завершил заказ на сумму {total}₽, тип оплаты: {payment_type}")
         
     except Exception as e:
-        logger.error(f"Ошибка в finish_order: {e}")
+        logger.error(f"Ошибка в process_payment_type: {e}")
         bot.answer_callback_query(call.id, "❌ Ошибка при оформлении заказа")
         bot.send_message(call.message.chat.id, "❌ Произошла ошибка. Попробуйте снова /start", 
                         reply_markup=get_main_keyboard())
@@ -512,23 +575,35 @@ def finish_order(call):
 def format_order_message(user):
     """Форматирует сообщение о заказе в нужном стиле"""
     
-    # Подсчет общей суммы
+    # Подсчет общей суммы и предоплаты
     total = sum(item['price'] * item['quantity'] for item in user.cart)
+    pre_save_total = sum(item['pre_save'] * item['quantity'] for item in user.cart)
     
     # Формируем сообщение
     message = "🎉 НОВЫЙ ЗАКАЗ!\n\n"
     message += f"👤 Клиент: {user.full_name}\n"
     message += f"📞 Телефон: {user.phone}\n"
     message += f"📧 Email: {user.email}\n"
-    message += f"✈️ Telegram: {user.telegram}\n\n"
+    message += f"✈️ Telegram: {user.telegram}\n"
+    message += f"💳 Тип оплаты: {payment_types[user.payment_type]}\n\n"
     message += "🛒 ТОВАРЫ:\n\n"
     
     for index, item in enumerate(user.cart):
         item_total = item['price'] * item['quantity']
+        item_pre_save = item['pre_save'] * item['quantity']
         message += f"{index + 1}. {products[item['product']]['name']} (Размер: {item['size']})\n"
-        message += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n\n"
+        message += f"   Количество: {item['quantity']} x {item['price']} ₽ = {item_total} ₽\n"
+        message += f"   💰 Предоплата: {item_pre_save} ₽\n\n"
     
-    message += f"💰 Общая сумма: {total} ₽"
+    message += f"💰 Общая сумма: {total} ₽\n"
+    message += f"🧾 Сумма предоплаты: {pre_save_total} ₽\n"
+    
+    # Добавляем информацию о сумме к оплате в зависимости от типа
+    if user.payment_type == 'full':
+        message += f"💵 К оплате: {total} ₽"
+    else:
+        message += f"💵 Предоплата: {pre_save_total} ₽\n"
+        message += f"💰 Остаток: {total - pre_save_total} ₽"
     
     return message
 
@@ -560,6 +635,7 @@ def debug_info(message):
         f"Telegram: {user.telegram}\n"
         f"Email: {user.email}\n"
         f"Товаров в корзине: {len(user.cart)}\n"
+        f"Тип оплаты: {user.payment_type}\n"
         f"Всего пользователей в памяти: {len(user_data)}"
     )
     
