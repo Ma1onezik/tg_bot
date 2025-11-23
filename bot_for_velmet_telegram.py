@@ -1,4 +1,6 @@
 
+
+
 import telebot
 from telebot import types
 import logging
@@ -230,40 +232,72 @@ def show_catalog(message):
         # Inline кнопки для товаров
         inline_markup = types.InlineKeyboardMarkup()
         
-        # Кнопка для добавления худи
-        for size in products['hoodie']['sizes']:
-            button = types.InlineKeyboardButton(
-                f"Худи {size} - {products['hoodie']['price']}₽", 
-                callback_data=f"add_hoodie_{size}"
-            )
-            inline_markup.add(button)
+        # Кнопка для выбора худи
+        hoodie_button = types.InlineKeyboardButton(
+            f"🏷️ {products['hoodie']['name']} - {products['hoodie']['price']}₽", 
+            callback_data="select_hoodie"
+        )
+        inline_markup.add(hoodie_button)
         
         # Кнопка просмотра корзины
         if user.cart:
             cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
             inline_markup.add(cart_button)
         
-        # ВСЕГДА добавляем кнопку завершения заказа
-        done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
-        inline_markup.add(done_button)
-        
         bot.send_message(message.chat.id, 
                         "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
-                        f"🏷️ {products['hoodie']['name']}\n"
-                        f"💵 Цена: {products['hoodie']['price']}₽\n"
-                        f"🧾 Сумма предзаказа: {products['hoodie']['pre-save']}₽\n"
-                        f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
-                        "💡 *Сумма предзаказа* - это предоплата, которая фиксирует за вами право на товар. "
-                        "Окончательный расчет производится позже.\n\n"
-                        "👇 Выберите размер:",
-                        reply_markup=markup,
-                        parse_mode="Markdown")
+                        "👇 Выберите товар:",
+                        reply_markup=markup)
         
+        # Отправляем inline кнопки
+        bot.send_message(message.chat.id, "Выберите товар:", reply_markup=inline_markup)
         
     except Exception as e:
         logger.error(f"Ошибка в show_catalog: {e}")
         bot.send_message(message.chat.id, "❌ Ошибка. Начните заново /start", 
                         reply_markup=get_main_keyboard())
+
+@bot.callback_query_handler(func=lambda call: call.data == 'select_hoodie')
+def select_hoodie(call):
+    """Показывает выбор размера для худи"""
+    try:
+        # Создаем клавиатуру с размерами
+        markup = types.InlineKeyboardMarkup()
+        
+        for size in products['hoodie']['sizes']:
+            button = types.InlineKeyboardButton(
+                f"Размер {size} - {products['hoodie']['price']}₽", 
+                callback_data=f"add_hoodie_{size}"
+            )
+            markup.add(button)
+        
+        # Кнопка возврата в каталог
+        back_button = types.InlineKeyboardButton("⬅️ Назад к каталогу", callback_data="back_to_catalog")
+        markup.add(back_button)
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"🏷️ {products['hoodie']['name']}\n"
+                 f"💵 Цена: {products['hoodie']['price']}₽\n"
+                 f"🧾 Сумма предзаказа: {products['hoodie']['pre-save']}₽\n"
+                 f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
+                 "👇 Выберите размер:",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в select_hoodie: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при выборе товара")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_catalog')
+def back_to_catalog(call):
+    """Возврат в каталог"""
+    try:
+        show_catalog(call.message)
+        bot.answer_callback_query(call.id, "Возврат в каталог")
+    except Exception as e:
+        logger.error(f"Ошибка в back_to_catalog: {e}")
 
 # Обработчик кнопки "Начать заново" в процессе оформления
 @bot.message_handler(func=lambda message: message.text == '🔄 Начать заново')
@@ -293,38 +327,12 @@ def add_to_cart(call):
         # Показываем уведомление о добавлении
         bot.answer_callback_query(call.id, f"✅ Худи размера {size} добавлен в корзину!")
         
-        # Отправляем сообщение о добавленном товаре
-        show_added_message(call)
-        
-    except Exception as e:
-        print(f"ERROR в add_to_cart: {e}")
-        bot.answer_callback_query(call.id, "❌ Ошибка при добавлении товара")
-
-def show_added_message(call):
-    """Показывает сообщение о добавленном товаре"""
-    try:
-        user_id = call.from_user.id
-        user = get_user_data(user_id)
-        
-        # Формируем сообщение о добавленном товаре
-        added_item = user.cart[-1]  # Последний добавленный товар
-        added_text = (
-            f"✅ Добавлено в корзину:\n"
-            f"🏷️ {products[added_item['product']]['name']}\n"
-            f"📏 Размер: {added_item['size']}\n"
-            f"💵 Цена: {added_item['price']}₽\n"
-            f"🧾 Предоплата: {added_item['pre_save']}₽\n\n"
-            f"🛒 Теперь в корзине: {len(user.cart)} товар(ов)"
-        )
-        
-        # Отправляем сообщение о добавлении
-        bot.send_message(call.message.chat.id, added_text)
-        
         # Показываем обновленный каталог
         show_catalog_updated(call.message)
         
     except Exception as e:
-        print(f"ERROR в show_added_message: {e}")
+        print(f"ERROR в add_to_cart: {e}")
+        bot.answer_callback_query(call.id, "❌ Ошибка при добавлении товара")
 
 def show_catalog_updated(message):
     """Показывает обновленный каталог"""
@@ -340,32 +348,29 @@ def show_catalog_updated(message):
         # Inline кнопки
         inline_markup = types.InlineKeyboardMarkup()
         
-        # Кнопка для добавления худи
-        for size in products['hoodie']['sizes']:
-            button = types.InlineKeyboardButton(
-                f"Худи {size} - {products['hoodie']['price']}₽", 
-                callback_data=f"add_hoodie_{size}"
-            )
-            inline_markup.add(button)
+        # Кнопка для выбора худи
+        hoodie_button = types.InlineKeyboardButton(
+            f"🏷️ {products['hoodie']['name']} - {products['hoodie']['price']}₽", 
+            callback_data="select_hoodie"
+        )
+        inline_markup.add(hoodie_button)
         
         # Кнопка просмотра корзины
         if user.cart:
             cart_button = types.InlineKeyboardButton(f"🛒 Корзина ({len(user.cart)})", callback_data="view_cart")
             inline_markup.add(cart_button)
         
-        # ВСЕГДА добавляем кнопку завершения заказа
-        done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
-        inline_markup.add(done_button)
+        # Кнопка завершения заказа
+        if user.cart:
+            done_button = types.InlineKeyboardButton("✅ Завершить заказ", callback_data="finish_order")
+            inline_markup.add(done_button)
         
         bot.send_message(message.chat.id,
-                       "🛍️ КАТАЛОГ ТОВАРОВ:\n\n"
-                       f"🏷️ {products['hoodie']['name']}\n"
-                       f"💵 Цена: {products['hoodie']['price']}₽\n"
-                       f"📏 Размеры: {', '.join(products['hoodie']['sizes'])}\n\n"
-                       "Выберите размер:\n\n",
+                       "🛍️ КАТАЛОГ ТОВАРОВ\n\n"
+                       "👇 Выберите товар:",
                        reply_markup=markup)
         
-        bot.send_message(message.chat.id, "👇 Выберите действие:", reply_markup=inline_markup)
+        bot.send_message(message.chat.id, "Выберите действие:", reply_markup=inline_markup)
             
     except Exception as e:
         logger.error(f"Ошибка в show_catalog_updated: {e}")
