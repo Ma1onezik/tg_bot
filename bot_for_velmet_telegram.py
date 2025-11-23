@@ -259,8 +259,6 @@ def show_catalog(message):
                         reply_markup=markup,
                         parse_mode="Markdown")
         
-        # Отправляем inline кнопки отдельным сообщением
-        bot.send_message(message.chat.id, "👇 Выберите действие:", reply_markup=inline_markup)
         
     except Exception as e:
         logger.error(f"Ошибка в show_catalog: {e}")
@@ -505,10 +503,7 @@ def show_payment_types(message):
         markup.add(back_button)
         
         message_text = (
-            "💳 ВЫБОР ТИПА ОПЛАТЫ\n\n"
-            f"💰 Общая сумма заказа: {total} ₽\n"
-            f"🧾 Сумма предоплаты: {pre_save_total} ₽\n\n"
-            "Выберите тип оплаты:"
+            "💳 Выберите тип оплаты:"
         )
         
         bot.send_message(message.chat.id, message_text, reply_markup=markup)
@@ -597,13 +592,8 @@ def format_order_message(user):
     
     message += f"💰 Общая сумма: {total} ₽\n"
     message += f"🧾 Сумма предоплаты: {pre_save_total} ₽\n"
-    
-    # Добавляем информацию о сумме к оплате в зависимости от типа
-    if user.payment_type == 'full':
-        message += f"💵 К оплате: {total} ₽"
-    else:
-        message += f"💵 Предоплата: {pre_save_total} ₽\n"
-        message += f"💰 Остаток: {total - pre_save_total} ₽"
+    message += f"💰 Оставшаяся не оплаченая часть: {total - pre_save_total} ₽"
+        
     
     return message
 
